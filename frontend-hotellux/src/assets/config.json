@@ -1,0 +1,20 @@
+{
+   //"apiBaseUrl": "http://localhost:9090/api"
+  
+  "apiBaseUrl": "http://backend-service:9191/api",
+ 
+  "endpoints": {
+    "users": "/users",
+    "staff": "/staff",
+    "suppliers": "/inventory/suppliers",
+    "rooms": "/rooms",
+    "orders": "/inventory/orders",
+    "maintenance": "/maintenance",
+    "inventoryItems": "/inventory/items",
+    "hotelChains": "/hotel-chains",
+    "hotelBrands": "/hotel-brands",
+    "hotel": "/hotels",
+    "crm": "/crm",
+    "bookings": "/bookings"
+  }
+}
