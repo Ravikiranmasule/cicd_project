@@ -1,10 +1,12 @@
 # Stage 1: Build
-FROM node:18-alpine AS build
+# Use Node 16 to match your project's specific requirements
+FROM node:16-alpine AS build
 WORKDIR /app
 
 # Install dependencies
 COPY package*.json ./
-RUN npm install --quiet
+# Using --legacy-peer-deps helps avoid version conflicts with older Angular projects
+RUN npm install --quiet --legacy-peer-deps
 
 # Build the application
 COPY . .
@@ -17,10 +19,8 @@ FROM nginx:stable-alpine
 RUN rm -rf /usr/share/nginx/html/*
 
 # Copy build output to Nginx html folder
-# Wildcard used to handle subfolders like dist/project-name/browser
-COPY --from=build /app/dist/*/browser/ /usr/share/nginx/html/
-# If your Angular version is older (pre-v17), use: 
-# COPY --from=build /app/dist/frontend-hotellux/ /usr/share/nginx/html/
+# For Angular 16 (your version), the path is usually just dist/project-name
+COPY --from=build /app/dist/frontend-hotellux/ /usr/share/nginx/html/
 
 EXPOSE 80
 
