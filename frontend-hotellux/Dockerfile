@@ -20,8 +20,7 @@ RUN rm -rf /usr/share/nginx/html/*
 
 # Copy build output to Nginx html folder
 # For Angular 16 (your version), the path is usually just dist/project-name
-COPY --from=build /app/dist/frontend-hotellux/ /usr/share/nginx/html/
-
+COPY --from=build /app/dist/*/ /usr/share/nginx/html/
 EXPOSE 80
 
 CMD ["nginx", "-g", "daemon off;"]
