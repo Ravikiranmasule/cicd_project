@@ -6,66 +6,46 @@ services:
     image: mysql:8.0
     container_name: mysql-db
     environment:
-      [cite_start]MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-Ravikiran@123} [cite: 1]
-      [cite_start]MYSQL_DATABASE: usermanagementmodule [cite: 1]
+      - MYSQL_ROOT_PASSWORD=${DB_PASSWORD:-Ravikiran@123}
+      - MYSQL_DATABASE=usermanagementmodule
     ports:
-      - [cite_start]"3307:3306" [cite: 1]
+      - "3307:3306"
     networks:
-      - [cite_start]hotel-network [cite: 1]
+      - hotel-network
     healthcheck:
-      [cite_start]test: ["CMD", "mysqladmin" ,"ping", "-h", "localhost"] [cite: 1]
-      [cite_start]timeout: 20s [cite: 1]
-      [cite_start]retries: 10 [cite: 2]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
 
   # 2. Backend (Spring Boot)
   backend:
-    build: ./backend-hotellux  # MUST match your folder name exactly
-    [cite_start]container_name: spring-backend [cite: 2]
+    build: ./backend-hotellux
+    container_name: spring-backend
     ports:
-      - [cite_start]"9191:9191" [cite: 2]
+      - "9191:9191"
     depends_on:
       mysql-db:
-        [cite_start]condition: service_healthy [cite: 2]
+        condition: service_healthy
     environment:
-      - [cite_start]DB_HOST=mysql-db [cite: 2]
-      - [cite_start]DB_USER=root [cite: 2]
-      - [cite_start]DB_PASSWORD=${DB_PASSWORD:-Ravikiran@123} [cite: 2]
-      - [cite_start]JWT_SECRET=${JWT_SECRET:-mySuperSecretKey123!} [cite: 2]
-      - [cite_start]JWT_EXPIRATION=3600000 [cite: 2]
+      - DB_HOST=mysql-db
+      - DB_USER=root
+      - DB_PASSWORD=${DB_PASSWORD:-Ravikiran@123}
+      - JWT_SECRET=${JWT_SECRET:-mySuperSecretKey123!}
+      - JWT_EXPIRATION=3600000
     networks:
-      - [cite_start]hotel-network [cite: 3]
+      - hotel-network
 
-  # 3. Frontend (Angular + Nginx)
+  # 3. Frontend (Angular)
   frontend:
-    build: ./frontend-hotellux  # MUST match your folder name exactly
-    [cite_start]container_name: angular-frontend [cite: 3]
+    build: ./frontend-hotellux
+    container_name: angular-frontend
     ports:
-      - [cite_start]"80:80" [cite: 3]
+      - "80:80"
     depends_on:
-      - [cite_start]backend [cite: 3]
+      - backend
     networks:
-      - [cite_start]hotel-network [cite: 3]
-
-  # 4. Monitoring (Prometheus)
-  prometheus:
-    [cite_start]image: prom/prometheus:latest [cite: 4]
-    [cite_start]container_name: prometheus [cite: 4]
-    volumes:
-      - [cite_start]./prometheus.yml:/etc/prometheus/prometheus.yml [cite: 4]
-    ports:
-      - [cite_start]"9090:9090" [cite: 4]
-    networks:
-      - [cite_start]hotel-network [cite: 4]
-
-  # 5. Visualization (Grafana)
-  grafana:
-    [cite_start]image: grafana/grafana:latest [cite: 4]
-    [cite_start]container_name: grafana [cite: 4]
-    ports:
-      - [cite_start]"3000:3000" [cite: 4]
-    networks:
-      - [cite_start]hotel-network [cite: 4]
+      - hotel-network
 
 networks:
   hotel-network:
-    [cite_start]driver: bridge [cite: 4]
+    driver: bridge
