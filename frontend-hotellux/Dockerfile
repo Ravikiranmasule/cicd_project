@@ -1,15 +1,27 @@
 # Stage 1: Build
-FROM node:14.21.3-alpine AS build [cite: 13]
-WORKDIR /app 
-COPY package*.json ./ 
-RUN npm install 
-COPY . . 
-RUN npm run build --prod [cite: 14]
+FROM node:18-alpine AS build
+WORKDIR /app
 
-# Stage 2: Serve
-FROM nginx:alpine [cite: 14]
-# Ensure 'your-project-name' matches the folder in your /dist directory
-COPY --from=build /app/dist/your-project-name /usr/share/nginx/html [cite: 14]
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-EXPOSE 80 [cite: 14]
-CMD ["nginx", "-g", "daemon off;"] [cite: 14]
+# Install dependencies
+COPY package*.json ./
+RUN npm install --quiet
+
+# Build the application
+COPY . .
+RUN npm run build --prod
+
+# Stage 2: Serve with Nginx
+FROM nginx:stable-alpine
+
+# Remove default nginx static assets
+RUN rm -rf /usr/share/nginx/html/*
+
+# Copy build output to Nginx html folder
+# Wildcard used to handle subfolders like dist/project-name/browser
+COPY --from=build /app/dist/*/browser/ /usr/share/nginx/html/
+# If your Angular version is older (pre-v17), use: 
+# COPY --from=build /app/dist/frontend-hotellux/ /usr/share/nginx/html/
+
+EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]
