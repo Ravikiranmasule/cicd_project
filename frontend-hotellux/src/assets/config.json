@@ -1,8 +1,5 @@
 {
-   //"apiBaseUrl": "http://localhost:9090/api"
-  
   "apiBaseUrl": "http://34.192.61.62:9191/api",
- 
   "endpoints": {
     "users": "/users",
     "staff": "/staff",
