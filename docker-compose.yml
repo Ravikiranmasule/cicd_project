@@ -10,6 +10,9 @@ services:
       - MYSQL_DATABASE=usermanagementmodule
     ports:
       - "3307:3306"
+    # Added volume mapping for data persistence
+    volumes:
+      - mysql_data:/var/lib/mysql
     networks:
       - hotel-network
     healthcheck:
@@ -49,3 +52,7 @@ services:
 networks:
   hotel-network:
     driver: bridge
+
+# Named volume definition ensures data is stored on the host EC2 instance
+volumes:
+  mysql_data:
