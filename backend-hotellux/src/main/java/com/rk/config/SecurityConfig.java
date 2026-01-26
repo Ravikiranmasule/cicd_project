@@ -41,11 +41,14 @@ public class SecurityConfig {
         return new BCryptPasswordEncoder();
     }
 
-    @Bean
+   @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
             .csrf(csrf -> csrf.disable())
             .authorizeHttpRequests(auth -> auth
+                // ADD THIS LINE BELOW TO FIX PROMETHEUS 401 ERROR
+                .requestMatchers("/actuator/**").permitAll() 
+                
                 .requestMatchers("/api/users/login").permitAll()
                 .requestMatchers("/api/users/register").hasRole("ADMIN")
                 .requestMatchers("/api/hotels","/api/hotel-chains","/api/hotel-brands").hasRole("MANAGER")
