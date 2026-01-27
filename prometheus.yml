@@ -1,9 +1,0 @@
-global:
-  scrape_interval: 15s
-
-scrape_configs:
-  - job_name: 'spring-boot-app'
-    metrics_path: '/actuator/prometheus'
-    static_configs:
-      # Use the container name 'spring-backend' instead of 'backend-service'
-      - targets: ['spring-backend:9191']
