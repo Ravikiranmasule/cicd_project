@@ -48,11 +48,15 @@ pipeline {
         stage('4. SonarQube Analysis') {
             steps {
                 withSonarQubeEnv('SonarQube') { 
-                    sh "${SCANNER_HOME}/bin/sonar-scanner \
+                    // This is the magic line that stops the loop
+                    sh """
+                    export SONAR_SCANNER_OPTS="-Xmx512m -Xms256m"
+                    ${SCANNER_HOME}/bin/sonar-scanner \
                     -Dsonar.projectKey=HotelLux-Project \
                     -Dsonar.projectName=HotelLux \
                     -Dsonar.sources=. \
-                    -Dsonar.java.binaries=backend-hotellux/target/classes"
+                    -Dsonar.java.binaries=backend-hotellux/target/classes
+                    """
                 }
             }
         }
