@@ -59,6 +59,7 @@ services:
       - "9090:9090"
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
     networks:
       - hotel-network
     restart: always
@@ -69,6 +70,8 @@ services:
     container_name: grafana
     ports:
       - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
     networks:
       - hotel-network
     restart: always
@@ -79,3 +82,5 @@ networks:
 
 volumes:
   mysql_data:
+  prometheus_data:
+  grafana_data:
