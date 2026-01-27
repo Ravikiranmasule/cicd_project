@@ -10,21 +10,17 @@ pipeline {
     stages {
         stage('0. Infrastructure Setup') {
             steps {
-                echo "Automating Infrastructure deployment from security-tools folder..."
-                // Pulls everything including sonarqube-compose.yml
+                echo "Syncing Infrastructure tools from security-tools folder..."
                 checkout scm
-                
-                // We enter the folder where the file actually lives
                 dir('security-tools') {
+                    // Ensures Sonar and Postgres are always running and configured
                     sh 'docker-compose -f sonarqube-compose.yml up -d'
                 }
-                echo "SonarQube & Postgres are now synchronized."
             }
         }
 
         stage('1. Checkout Code') {
             steps {
-                // Already pulled in Stage 0, but good for explicit logging
                 git branch: 'main', url: 'https://github.com/Ravikiranmasule/cicd_project.git'
             }
         }
@@ -48,7 +44,6 @@ pipeline {
         stage('4. SonarQube Analysis') {
             steps {
                 withSonarQubeEnv('SonarQube') { 
-                    // This is the magic line that stops the loop
                     sh """
                     export SONAR_SCANNER_OPTS="-Xmx512m -Xms256m"
                     ${SCANNER_HOME}/bin/sonar-scanner \
@@ -95,7 +90,6 @@ pipeline {
 
         stage('8. Docker Deploy') {
             steps {
-                // This uses the main docker-compose.yml in your root directory
                 sh 'docker-compose down --remove-orphans || true'
                 sh 'docker system prune -f'
                 sh 'docker-compose up -d --build'
@@ -120,6 +114,7 @@ pipeline {
                     sh """
                     curl -X POST "${DEFECTDOJO_URL}/api/v2/import-scan/" \
                          -H "Authorization: Token $DOJO_TOKEN" \
+                         -H "Content-Type: multipart/form-data" \
                          -F "active=true" \
                          -F "verified=false" \
                          -F "scan_type=ZAP Scan" \
@@ -133,7 +128,7 @@ pipeline {
     }
 
     post {
-        success { echo "SUCCESS: Full Stack DevSecOps Pipeline Completed!" }
-        failure { echo "FAILURE: Build failed. Check the logs." }
+        success { echo "SUCCESS: HotelLux DevSecOps Pipeline Finished!" }
+        failure { echo "FAILURE: Build failed. Check the Jenkins Console Output." }
     }
 }
