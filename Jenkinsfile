@@ -1,46 +1,134 @@
 pipeline {
-    agent any
+    agent { label 'docker-agent' }
+
     environment {
-        SCANNER_HOME = tool 'sonar-scanner' [cite: 5]
-        JWT_SECRET = credentials('jwt-secret-id') [cite: 5]
-        DB_PASSWORD = credentials('db-password-id') [cite: 5]
-        DEFECTDOJO_TOKEN = credentials('defectdojo-api-token') [cite: 5]
+        SCANNER_HOME = tool 'SonarScanner' 
+        DEFECTDOJO_URL = 'http://52.71.8.63:8080' 
+        APP_URL = 'http://34.192.61.62'
     }
+
     stages {
-        stage('Code Analysis (SonarQube)') {
+        stage('0. Infrastructure Setup') {
             steps {
-                dir('backend-hotellux') { [cite: 6]
-                    withSonarQubeEnv('sonar-server') { [cite: 6]
-                        sh "${SCANNER_HOME}/bin/sonar-scanner -Dsonar.projectKey=luxtavern-be" [cite: 6]
-                    }
-                }
+                echo "Automating Infrastructure deployment from SCM..."
+                // This 'checkout scm' pulls the latest sonarqube-compose.yml from your repo
+                checkout scm
+                
+                // Deploy/Update the SonarQube stack dynamically
+                // This ensures your 'restart: always' and 'db' configs are applied
+                sh 'docker-compose -f sonarqube-compose.yml up -d'
+                
+                echo "Infrastructure is synchronized with GitHub."
             }
         }
-        stage('Quality Gate') {
+
+        stage('1. Checkout Code') {
             steps {
-                timeout(time: 1, unit: 'HOURS') { [cite: 7]
-                    waitForQualityGate abortPipeline: true [cite: 7]
-                }
+                // Already handled by checkout scm in Stage 0, but kept for clarity
+                git branch: 'main', url: 'https://github.com/Ravikiranmasule/cicd_project.git'
             }
         }
-        stage('Vulnerability Scan & DefectDojo') {
+
+        stage('2. Build Backend (JAR)') {
             steps {
                 dir('backend-hotellux') {
-                    sh 'mvn dependency-check:check' [cite: 8]
-                    // This requires the DefectDojo plugin in Jenkins
-                    defectDojoPublisher(
-                        artifact: 'target/dependency-check-report.xml', [cite: 9]
-                        productName: 'Luxtavern', [cite: 9]
-                        scanType: 'Dependency Check Scan', [cite: 9]
-                        engagementName: 'CI/CD Pipeline' [cite: 9]
-                    ) [cite: 10]
+                    sh 'mvn clean package -DskipTests'
                 }
             }
         }
-        stage('Build & Deploy') {
+
+        stage('3. Build Frontend (Angular)') {
             steps {
-                sh 'docker-compose up -d --build' [cite: 11]
+                dir('frontend-hotellux') {
+                    sh 'export NODE_OPTIONS=--openssl-legacy-provider && npm install && npm run build'
+                }
             }
         }
+
+        stage('4. SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('SonarQube') { 
+                    sh "${SCANNER_HOME}/bin/sonar-scanner \
+                    -Dsonar.projectKey=HotelLux-Project \
+                    -Dsonar.projectName=HotelLux \
+                    -Dsonar.sources=. \
+                    -Dsonar.java.binaries=backend-hotellux/target/classes"
+                }
+            }
+        }
+
+        stage('5. Quality Gate') {
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true 
+                }
+            }
+        }
+
+        stage('6. Security Scan (Trivy)') {
+            steps {
+                sh 'docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v $(pwd):/tmp \
+                    aquasec/trivy image --severity HIGH,CRITICAL --format json --output /tmp/trivy-report.json mysql:8.0'
+            }
+        }
+
+        stage('7. Upload Trivy to DefectDojo') {
+            steps {
+                withCredentials([string(credentialsId: 'defectdojo-token', variable: 'DOJO_TOKEN')]) {
+                    sh """
+                    curl -X POST "${DEFECTDOJO_URL}/api/v2/import-scan/" \
+                         -H "Authorization: Token $DOJO_TOKEN" \
+                         -F "active=true" \
+                         -F "verified=false" \
+                         -F "scan_type=Trivy Scan" \
+                         -F "product_name=HotelLux" \
+                         -F "engagement_name=CI/CD Build ${env.BUILD_NUMBER}" \
+                         -F "file=@trivy-report.json"
+                    """
+                }
+            }
+        }
+
+        stage('8. Docker Deploy') {
+            steps {
+                sh 'docker-compose down --remove-orphans || true'
+                sh 'docker system prune -f'
+                sh 'docker-compose up -d --build'
+                sh 'sleep 20'
+            }
+        }
+
+        stage('9. DAST Scan (OWASP ZAP)') {
+            steps {
+                sh """
+                docker run --user root --rm -v \$(pwd):/zap/wrk/:rw -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
+                    -t ${APP_URL} \
+                    -J zap-report.json \
+                    -r zap-report.html || true
+                """
+            }
+        }
+
+        stage('10. Upload ZAP to DefectDojo') {
+            steps {
+                withCredentials([string(credentialsId: 'defectdojo-token', variable: 'DOJO_TOKEN')]) {
+                    sh """
+                    curl -X POST "${DEFECTDOJO_URL}/api/v2/import-scan/" \
+                         -H "Authorization: Token $DOJO_TOKEN" \
+                         -F "active=true" \
+                         -F "verified=false" \
+                         -F "scan_type=ZAP Scan" \
+                         -F "product_name=HotelLux" \
+                         -F "engagement_name=CI/CD Build ${env.BUILD_NUMBER}" \
+                         -F "file=@zap-report.json"
+                    """
+                }
+            }
+        }
+    }
+
+    post {
+        success { echo "SUCCESS: Infrastructure updated and App deployed!" }
+        failure { echo "FAILURE: Check the logs in the Console Output." }
     }
 }
