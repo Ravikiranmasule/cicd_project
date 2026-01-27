@@ -10,21 +10,21 @@ pipeline {
     stages {
         stage('0. Infrastructure Setup') {
             steps {
-                echo "Automating Infrastructure deployment from SCM..."
-                // This 'checkout scm' pulls the latest sonarqube-compose.yml from your repo
+                echo "Automating Infrastructure deployment from security-tools folder..."
+                // Pulls everything including sonarqube-compose.yml
                 checkout scm
                 
-                // Deploy/Update the SonarQube stack dynamically
-                // This ensures your 'restart: always' and 'db' configs are applied
-                sh 'docker-compose -f sonarqube-compose.yml up -d'
-                
-                echo "Infrastructure is synchronized with GitHub."
+                // We enter the folder where the file actually lives
+                dir('security-tools') {
+                    sh 'docker-compose -f sonarqube-compose.yml up -d'
+                }
+                echo "SonarQube & Postgres are now synchronized."
             }
         }
 
         stage('1. Checkout Code') {
             steps {
-                // Already handled by checkout scm in Stage 0, but kept for clarity
+                // Already pulled in Stage 0, but good for explicit logging
                 git branch: 'main', url: 'https://github.com/Ravikiranmasule/cicd_project.git'
             }
         }
@@ -91,6 +91,7 @@ pipeline {
 
         stage('8. Docker Deploy') {
             steps {
+                // This uses the main docker-compose.yml in your root directory
                 sh 'docker-compose down --remove-orphans || true'
                 sh 'docker system prune -f'
                 sh 'docker-compose up -d --build'
@@ -128,7 +129,7 @@ pipeline {
     }
 
     post {
-        success { echo "SUCCESS: Infrastructure updated and App deployed!" }
-        failure { echo "FAILURE: Check the logs in the Console Output." }
+        success { echo "SUCCESS: Full Stack DevSecOps Pipeline Completed!" }
+        failure { echo "FAILURE: Build failed. Check the logs." }
     }
 }
