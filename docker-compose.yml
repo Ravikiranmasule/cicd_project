@@ -10,11 +10,11 @@ services:
       - MYSQL_DATABASE=usermanagementmodule
     ports:
       - "3307:3306"
-    # Added volume mapping for data persistence
     volumes:
       - mysql_data:/var/lib/mysql
     networks:
       - hotel-network
+    restart: always
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       timeout: 20s
@@ -37,6 +37,7 @@ services:
       - JWT_EXPIRATION=3600000
     networks:
       - hotel-network
+    restart: always
 
   # 3. Frontend (Angular)
   frontend:
@@ -48,11 +49,33 @@ services:
       - backend
     networks:
       - hotel-network
+    restart: always
+
+  # 4. Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - hotel-network
+    restart: always
+
+  # 5. Grafana
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    networks:
+      - hotel-network
+    restart: always
 
 networks:
   hotel-network:
     driver: bridge
 
-# Named volume definition ensures data is stored on the host EC2 instance
 volumes:
   mysql_data:
