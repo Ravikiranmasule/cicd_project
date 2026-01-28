@@ -103,7 +103,8 @@ pipeline {
                 sh 'docker-compose down --remove-orphans || true'
                 sh 'docker system prune -f'
                 sh 'docker-compose up -d --build'
-                sh 'sleep 30' 
+                
+                sh 'sleep 60' 
             }
         }
 
