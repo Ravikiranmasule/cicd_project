@@ -15,21 +15,20 @@ pipeline {
     stages {
         stage('0. Permission & Memory Cleanup') {
             steps {
-                echo "Cleaning memory and fixing permissions dynamically..."
-                // 1. DYNAMIC SELF-HEALING: Ensures Docker starts on EC2 boot
+                echo "Cleaning memory safely without wiping tool data..."
                 sh 'sudo systemctl enable docker'
                 
-                // 2. DYNAMIC RECOVERY: Forces every running container on this EC2 to 'Always Restart'
-                // This fixes DefectDojo/Sonar dynamically if you forgot to edit their YAMLs
+                // Forces running containers to restart, but doesn't delete them
                 sh 'docker update --restart always $(docker ps -q) || true'
                 
-                // 3. MEMORY SAFETY: Deep clean old images BEFORE the build starts to prevent 77% disk crash
-                sh 'docker system prune -a -f'
+                // SAFE CLEAN: Removed '-a'. This keeps your tool images (Sonar/Dojo/MySQL) safe.
+                sh 'docker image prune -f' 
                 
                 sh 'sudo chmod -R 777 ${WORKSPACE} || true'
                 checkout scm
                 
                 dir('security-tools') {
+                    // Starts tools only if they aren't already running
                     sh 'docker-compose -f sonarqube-compose.yml up -d'
                 }
             }
@@ -86,7 +85,6 @@ pipeline {
             steps {
                 withCredentials([string(credentialsId: 'defectdojo-token', variable: 'DOJO_TOKEN')]) {
                     sh """
-                    # If Dojo was offline, the dynamic recovery in Stage 0 will help it wake up
                     curl -X POST "${DEFECTDOJO_URL}/api/v2/engagements/" \
                          -H "Authorization: Token \$DOJO_TOKEN" \
                          -H "Content-Type: multipart/form-data" \
@@ -112,6 +110,8 @@ pipeline {
 
         stage('7. Docker Deploy') {
             steps {
+                // Down and Up for the Application ONLY. 
+                // Security tools in Stage 0 are left running to preserve their uptime.
                 sh 'docker-compose down --remove-orphans || true'
                 sh 'docker-compose up -d --build'
                 sh 'sleep 60' 
@@ -166,9 +166,10 @@ pipeline {
 
     post {
         always {
-            echo "Final cleanup... maintaining disk health."
+            echo "Final cleanup... maintaining disk health while protecting persistent volumes."
             cleanWs() 
-            sh 'docker image prune -a -f' 
+            // SAFE CLEAN: Removed '-a'. Keeps your base tool images on the disk.
+            sh 'docker image prune -f' 
         }
         success { echo "SUCCESS: HotelLux DevSecOps Pipeline Finished!" }
         failure { echo "FAILURE: Build failed. Check the Jenkins Console Output." }
