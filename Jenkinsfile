@@ -101,6 +101,7 @@ pipeline {
         stage('8. Docker Deploy') {
             steps {
                 sh 'docker-compose down --remove-orphans || true'
+                sh 'docker system prune -f'
                 sh 'docker-compose up -d --build'
                 sh 'sleep 30' 
             }
@@ -157,7 +158,6 @@ pipeline {
         always {
             echo "Performing dynamic cleanup... Volumes are safe."
             cleanWs() 
-            # These commands only delete images and cache, NEVER volumes or data
             sh 'docker image prune -a -f' 
             sh 'docker builder prune -a -f'
         }
