@@ -75,6 +75,7 @@ pipeline {
             steps {
                 withCredentials([string(credentialsId: 'defectdojo-token', variable: 'DOJO_TOKEN')]) {
                     sh """
+                    # 1. Create the engagement dynamically
                     curl -X POST "${DEFECTDOJO_URL}/api/v2/engagements/" \
                          -H "Authorization: Token \$DOJO_TOKEN" \
                          -H "Content-Type: multipart/form-data" \
@@ -85,6 +86,7 @@ pipeline {
                          -F "status=In Progress" \
                          -F "engagement_type=CI/CD"
 
+                    # 2. Upload the Trivy report
                     curl -X POST "${DEFECTDOJO_URL}/api/v2/import-scan/" \
                          -H "Authorization: Token \$DOJO_TOKEN" \
                          -F "active=true" \
@@ -110,7 +112,7 @@ pipeline {
         stage('9. DAST Scan (OWASP ZAP)') {
             steps {
                 sh """
-                # CHANGED: -x generates the XML file DefectDojo requires
+                # Using -x for XML output as required by DefectDojo
                 docker run --user root --network hotellux-app-build_hotel-network --rm -v \$(pwd):/zap/wrk/:rw -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
                     -t ${APP_URL} \
                     -x zap-report.xml \
@@ -123,7 +125,7 @@ pipeline {
             steps {
                 withCredentials([string(credentialsId: 'defectdojo-token', variable: 'DOJO_TOKEN')]) {
                     sh """
-                    # CHANGED: Now uploading the .xml file
+                    # Uploading the XML file generated in Stage 9
                     curl -X POST "${DEFECTDOJO_URL}/api/v2/import-scan/" \
                          -H "Authorization: Token \$DOJO_TOKEN" \
                          -H "Content-Type: multipart/form-data" \
@@ -142,15 +144,15 @@ pipeline {
             steps {
                 withCredentials([string(credentialsId: 'defectdojo-token', variable: 'DOJO_TOKEN')]) {
                     sh """
-                    # NEW: Push SonarQube metrics to the same engagement
+                    # CHANGED: Using 'SonarQube API Import' to pull data automatically without a local file
                     curl -X POST "${DEFECTDOJO_URL}/api/v2/import-scan/" \
                          -H "Authorization: Token \$DOJO_TOKEN" \
+                         -H "Content-Type: multipart/form-data" \
                          -F "active=true" \
                          -F "verified=false" \
-                         -F "scan_type=SonarQube Scan" \
+                         -F "scan_type=SonarQube API Import" \
                          -F "product_name=HotelLux" \
-                         -F "engagement_name=CI/CD Build ${env.BUILD_NUMBER}" \
-                         -F "service=HotelLux-Backend"
+                         -F "engagement_name=CI/CD Build ${env.BUILD_NUMBER}"
                     """
                 }
             }
