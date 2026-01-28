@@ -75,7 +75,6 @@ pipeline {
             steps {
                 withCredentials([string(credentialsId: 'defectdojo-token', variable: 'DOJO_TOKEN')]) {
                     sh """
-                    # 1. Create the engagement dynamically
                     curl -X POST "${DEFECTDOJO_URL}/api/v2/engagements/" \
                          -H "Authorization: Token \$DOJO_TOKEN" \
                          -H "Content-Type: multipart/form-data" \
@@ -86,7 +85,6 @@ pipeline {
                          -F "status=In Progress" \
                          -F "engagement_type=CI/CD"
 
-                    # 2. Upload the Trivy report
                     curl -X POST "${DEFECTDOJO_URL}/api/v2/import-scan/" \
                          -H "Authorization: Token \$DOJO_TOKEN" \
                          -F "active=true" \
@@ -103,7 +101,6 @@ pipeline {
         stage('8. Docker Deploy') {
             steps {
                 sh 'docker-compose down --remove-orphans || true'
-                sh 'docker system prune -f'
                 sh 'docker-compose up -d --build'
                 sh 'sleep 30' 
             }
@@ -112,7 +109,6 @@ pipeline {
         stage('9. DAST Scan (OWASP ZAP)') {
             steps {
                 sh """
-                # Using -x for XML output as required by DefectDojo
                 docker run --user root --network hotellux-app-build_hotel-network --rm -v \$(pwd):/zap/wrk/:rw -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
                     -t ${APP_URL} \
                     -x zap-report.xml \
@@ -125,7 +121,6 @@ pipeline {
             steps {
                 withCredentials([string(credentialsId: 'defectdojo-token', variable: 'DOJO_TOKEN')]) {
                     sh """
-                    # Uploading the XML file generated in Stage 9
                     curl -X POST "${DEFECTDOJO_URL}/api/v2/import-scan/" \
                          -H "Authorization: Token \$DOJO_TOKEN" \
                          -H "Content-Type: multipart/form-data" \
@@ -144,7 +139,6 @@ pipeline {
             steps {
                 withCredentials([string(credentialsId: 'defectdojo-token', variable: 'DOJO_TOKEN')]) {
                     sh """
-                    # CHANGED: Using 'SonarQube API Import' to pull data automatically without a local file
                     curl -X POST "${DEFECTDOJO_URL}/api/v2/import-scan/" \
                          -H "Authorization: Token \$DOJO_TOKEN" \
                          -H "Content-Type: multipart/form-data" \
@@ -161,9 +155,11 @@ pipeline {
 
     post {
         always {
-            echo "Performing post-build cleanup..."
+            echo "Performing dynamic cleanup... Volumes are safe."
             cleanWs() 
-            sh 'docker image prune -f' 
+            # These commands only delete images and cache, NEVER volumes or data
+            sh 'docker image prune -a -f' 
+            sh 'docker builder prune -a -f'
         }
         success { echo "SUCCESS: HotelLux DevSecOps Pipeline Finished!" }
         failure { echo "FAILURE: Build failed. Check the Jenkins Console Output." }
