@@ -4,7 +4,6 @@ pipeline {
     environment {
         SCANNER_HOME = tool 'SonarScanner' 
         DEFECTDOJO_URL = 'http://52.71.8.63:8080' 
-        // Use service name for internal Docker network scanning
         APP_URL = 'http://angular-frontend'
     }
 
@@ -45,12 +44,14 @@ pipeline {
             steps {
                 withSonarQubeEnv('SonarQube') { 
                     sh """
-                    export SONAR_SCANNER_OPTS="-Xmx512m -Xms256m"
+                    # Optimization: Lower initial Java memory and limit Node.js heap for TS
+                    export SONAR_SCANNER_OPTS="-Xmx512m"
                     ${SCANNER_HOME}/bin/sonar-scanner \
                     -Dsonar.projectKey=HotelLux-Project \
                     -Dsonar.projectName=HotelLux \
                     -Dsonar.sources=. \
-                    -Dsonar.java.binaries=backend-hotellux/target/classes
+                    -Dsonar.java.binaries=backend-hotellux/target/classes \
+                    -Dsonar.javascript.node.maxspace=1024
                     """
                 }
             }
@@ -75,7 +76,7 @@ pipeline {
             steps {
                 withCredentials([string(credentialsId: 'defectdojo-token', variable: 'DOJO_TOKEN')]) {
                     sh """
-                    # Dynamically create engagement for the current build number
+                    # Automate engagement creation
                     curl -X POST "${DEFECTDOJO_URL}/api/v2/engagements/" \
                          -H "Authorization: Token $DOJO_TOKEN" \
                          -H "Content-Type: multipart/form-data" \
@@ -86,7 +87,7 @@ pipeline {
                          -F "status=In Progress" \
                          -F "engagement_type=CI/CD"
 
-                    # Upload Trivy report
+                    # Upload scan
                     curl -X POST "${DEFECTDOJO_URL}/api/v2/import-scan/" \
                          -H "Authorization: Token $DOJO_TOKEN" \
                          -F "active=true" \
@@ -105,7 +106,7 @@ pipeline {
                 sh 'docker-compose down --remove-orphans || true'
                 sh 'docker system prune -f'
                 sh 'docker-compose up -d --build'
-                sh 'sleep 30' // Increased sleep to ensure app is fully ready for DAST
+                sh 'sleep 30' 
             }
         }
 
@@ -140,6 +141,11 @@ pipeline {
     }
 
     post {
+        always {
+            echo "Performing post-build cleanup..."
+            cleanWs() // Deletes the 500MB workspace
+            sh 'docker image prune -f' // Deletes old build images to save disk
+        }
         success { echo "SUCCESS: HotelLux DevSecOps Pipeline Finished!" }
         failure { echo "FAILURE: Build failed. Check the Jenkins Console Output." }
     }
