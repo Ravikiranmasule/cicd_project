@@ -44,7 +44,6 @@ pipeline {
             steps {
                 withSonarQubeEnv('SonarQube') { 
                     sh """
-                    # Optimization: Lower initial Java memory and limit Node.js heap for TS
                     export SONAR_SCANNER_OPTS="-Xmx512m"
                     ${SCANNER_HOME}/bin/sonar-scanner \
                     -Dsonar.projectKey=HotelLux-Project \
@@ -76,9 +75,8 @@ pipeline {
             steps {
                 withCredentials([string(credentialsId: 'defectdojo-token', variable: 'DOJO_TOKEN')]) {
                     sh """
-                    # Automate engagement creation
                     curl -X POST "${DEFECTDOJO_URL}/api/v2/engagements/" \
-                         -H "Authorization: Token $DOJO_TOKEN" \
+                         -H "Authorization: Token \$DOJO_TOKEN" \
                          -H "Content-Type: multipart/form-data" \
                          -F "name=CI/CD Build ${env.BUILD_NUMBER}" \
                          -F "target_start=\$(date +%Y-%m-%d)" \
@@ -87,9 +85,8 @@ pipeline {
                          -F "status=In Progress" \
                          -F "engagement_type=CI/CD"
 
-                    # Upload scan
                     curl -X POST "${DEFECTDOJO_URL}/api/v2/import-scan/" \
-                         -H "Authorization: Token $DOJO_TOKEN" \
+                         -H "Authorization: Token \$DOJO_TOKEN" \
                          -F "active=true" \
                          -F "verified=false" \
                          -F "scan_type=Trivy Scan" \
@@ -113,9 +110,10 @@ pipeline {
         stage('9. DAST Scan (OWASP ZAP)') {
             steps {
                 sh """
+                # CHANGED: -x generates the XML file DefectDojo requires
                 docker run --user root --network hotellux-app-build_hotel-network --rm -v \$(pwd):/zap/wrk/:rw -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
                     -t ${APP_URL} \
-                    -J zap-report.json \
+                    -x zap-report.xml \
                     -r zap-report.html || true
                 """
             }
@@ -125,15 +123,34 @@ pipeline {
             steps {
                 withCredentials([string(credentialsId: 'defectdojo-token', variable: 'DOJO_TOKEN')]) {
                     sh """
+                    # CHANGED: Now uploading the .xml file
                     curl -X POST "${DEFECTDOJO_URL}/api/v2/import-scan/" \
-                         -H "Authorization: Token $DOJO_TOKEN" \
+                         -H "Authorization: Token \$DOJO_TOKEN" \
                          -H "Content-Type: multipart/form-data" \
                          -F "active=true" \
                          -F "verified=false" \
                          -F "scan_type=ZAP Scan" \
                          -F "product_name=HotelLux" \
                          -F "engagement_name=CI/CD Build ${env.BUILD_NUMBER}" \
-                         -F "file=@zap-report.json"
+                         -F "file=@zap-report.xml"
+                    """
+                }
+            }
+        }
+
+        stage('11. Upload SonarQube to DefectDojo') {
+            steps {
+                withCredentials([string(credentialsId: 'defectdojo-token', variable: 'DOJO_TOKEN')]) {
+                    sh """
+                    # NEW: Push SonarQube metrics to the same engagement
+                    curl -X POST "${DEFECTDOJO_URL}/api/v2/import-scan/" \
+                         -H "Authorization: Token \$DOJO_TOKEN" \
+                         -F "active=true" \
+                         -F "verified=false" \
+                         -F "scan_type=SonarQube Scan" \
+                         -F "product_name=HotelLux" \
+                         -F "engagement_name=CI/CD Build ${env.BUILD_NUMBER}" \
+                         -F "service=HotelLux-Backend"
                     """
                 }
             }
@@ -143,8 +160,8 @@ pipeline {
     post {
         always {
             echo "Performing post-build cleanup..."
-            cleanWs() // Deletes the 500MB workspace
-            sh 'docker image prune -f' // Deletes old build images to save disk
+            cleanWs() 
+            sh 'docker image prune -f' 
         }
         success { echo "SUCCESS: HotelLux DevSecOps Pipeline Finished!" }
         failure { echo "FAILURE: Build failed. Check the Jenkins Console Output." }
