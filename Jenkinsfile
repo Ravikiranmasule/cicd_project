@@ -4,16 +4,16 @@ pipeline {
     environment {
         SCANNER_HOME = tool 'SonarScanner' 
         DEFECTDOJO_URL = 'http://52.71.8.63:8080' 
-        APP_URL = 'http://34.192.61.62'
+        // Use service name for internal Docker network scanning
+        APP_URL = 'http://angular-frontend'
     }
 
     stages {
         stage('0. Infrastructure Setup') {
             steps {
-                echo "Syncing Infrastructure tools from security-tools folder..."
+                echo "Syncing Infrastructure tools..."
                 checkout scm
                 dir('security-tools') {
-                    // Ensures Sonar and Postgres are always running and configured
                     sh 'docker-compose -f sonarqube-compose.yml up -d'
                 }
             }
@@ -71,10 +71,22 @@ pipeline {
             }
         }
 
-        stage('7. Upload Trivy to DefectDojo') {
+        stage('7. Create Engagement & Upload Trivy') {
             steps {
                 withCredentials([string(credentialsId: 'defectdojo-token', variable: 'DOJO_TOKEN')]) {
                     sh """
+                    # Dynamically create engagement for the current build number
+                    curl -X POST "${DEFECTDOJO_URL}/api/v2/engagements/" \
+                         -H "Authorization: Token $DOJO_TOKEN" \
+                         -H "Content-Type: multipart/form-data" \
+                         -F "name=CI/CD Build ${env.BUILD_NUMBER}" \
+                         -F "target_start=\$(date +%Y-%m-%d)" \
+                         -F "target_end=\$(date -d '+1 day' +%Y-%m-%d)" \
+                         -F "product=1" \
+                         -F "status=In Progress" \
+                         -F "engagement_type=CI/CD"
+
+                    # Upload Trivy report
                     curl -X POST "${DEFECTDOJO_URL}/api/v2/import-scan/" \
                          -H "Authorization: Token $DOJO_TOKEN" \
                          -F "active=true" \
@@ -93,14 +105,14 @@ pipeline {
                 sh 'docker-compose down --remove-orphans || true'
                 sh 'docker system prune -f'
                 sh 'docker-compose up -d --build'
-                sh 'sleep 20'
+                sh 'sleep 30' // Increased sleep to ensure app is fully ready for DAST
             }
         }
 
         stage('9. DAST Scan (OWASP ZAP)') {
             steps {
                 sh """
-                docker run --user root --rm -v \$(pwd):/zap/wrk/:rw -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
+                docker run --user root --network hotellux-app-build_hotel-network --rm -v \$(pwd):/zap/wrk/:rw -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
                     -t ${APP_URL} \
                     -J zap-report.json \
                     -r zap-report.html || true
