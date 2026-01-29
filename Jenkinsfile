@@ -110,11 +110,11 @@ pipeline {
 
         stage('7. Docker Deploy') {
             steps {
-                // Down and Up for the Application ONLY. 
-                // Security tools in Stage 0 are left running to preserve their uptime.
+                // ADDED: Force removes any existing prometheus container to avoid naming conflicts
+                sh 'docker rm -f prometheus || true' 
                 sh 'docker-compose down --remove-orphans || true'
                 sh 'docker-compose up -d --build'
-                sh 'sleep 60' 
+                sh 'sleep 30' 
             }
         }
 
