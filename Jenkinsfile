@@ -10,25 +10,25 @@ pipeline {
         SCANNER_HOME = tool 'SonarScanner' 
         DEFECTDOJO_URL = 'http://52.71.8.63:8080' 
         APP_URL = 'http://angular-frontend'
+        // DockerHub Username - Replace 'ravikiranmasule' if it is different
+        DOCKERHUB_USER = 'ravikiranmasule' 
     }
 
     stages {
-        stage('0. Permission & Memory Cleanup') {
+        stage('0. Pre-Flight & Permission') {
             steps {
+                script {
+                    echo "Checking if DefectDojo is alive..."
+                    sh "curl -s --connect-timeout 5 ${DEFECTDOJO_URL}/api/v2/health_check/ || echo 'Warning: Dojo unreachable'"
+                }
                 echo "Cleaning memory safely without wiping tool data..."
                 sh 'sudo systemctl enable docker'
-                
-                // Forces running containers to restart, but doesn't delete them
                 sh 'docker update --restart always $(docker ps -q) || true'
-                
-                // SAFE CLEAN: Removed '-a'. This keeps your tool images (Sonar/Dojo/MySQL) safe.
                 sh 'docker image prune -f' 
-                
                 sh 'sudo chmod -R 777 ${WORKSPACE} || true'
                 checkout scm
                 
                 dir('security-tools') {
-                    // Starts tools only if they aren't already running
                     sh 'docker-compose -f sonarqube-compose.yml up -d'
                 }
             }
@@ -76,12 +76,33 @@ pipeline {
 
         stage('5. Security Scan (Trivy)') {
             steps {
+                // Scanning local image before pushing
                 sh 'docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v $(pwd):/tmp \
                     aquasec/trivy image --severity HIGH,CRITICAL --format json --output /tmp/trivy-report.json mysql:8.0'
             }
         }
 
-        stage('6. Create Engagement & Upload Trivy') {
+        stage('6. Push to DockerHub') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', 
+                                 usernameVariable: 'DOCKER_USER', 
+                                 passwordVariable: 'DOCKER_PASS')]) {
+                    sh """
+                    echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin
+                    
+                    # Tagging the build artifacts
+                    docker tag hotellux-app-build_backend:latest \$DOCKER_USER/hotellux-backend:latest
+                    docker tag hotellux-app-build_frontend:latest \$DOCKER_USER/hotellux-frontend:latest
+                    
+                    # Pushing to Registry
+                    docker push \$DOCKER_USER/hotellux-backend:latest
+                    docker push \$DOCKER_USER/hotellux-frontend:latest
+                    """
+                }
+            }
+        }
+
+        stage('7. Create Engagement & Upload Trivy') {
             steps {
                 withCredentials([string(credentialsId: 'defectdojo-token', variable: 'DOJO_TOKEN')]) {
                     sh """
@@ -108,9 +129,8 @@ pipeline {
             }
         }
 
-        stage('7. Docker Deploy') {
+        stage('8. Docker Deploy') {
             steps {
-                // ADDED: Force removes any existing prometheus container to avoid naming conflicts
                 sh 'docker rm -f prometheus || true' 
                 sh 'docker-compose down --remove-orphans || true'
                 sh 'docker-compose up -d --build'
@@ -118,43 +138,27 @@ pipeline {
             }
         }
 
-        stage('8. DAST Scan (OWASP ZAP)') {
-            steps {
-                sh """
-                docker run --user root --network hotellux-app-build_hotel-network --rm -v \$(pwd):/zap/wrk/:rw -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
-                    -t ${APP_URL} \
-                    -x zap-report.xml \
-                    -r zap-report.html || true
-                """
-            }
-        }
-
-        stage('9. Upload ZAP to DefectDojo') {
+        stage('9. Final Security Sync (ZAP & Sonar)') {
             steps {
                 withCredentials([string(credentialsId: 'defectdojo-token', variable: 'DOJO_TOKEN')]) {
                     sh """
+                    # DAST Scan
+                    docker run --user root --network hotellux-app-build_hotel-network --rm -v \$(pwd):/zap/wrk/:rw -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
+                        -t ${APP_URL} -x zap-report.xml || true
+                    
+                    # Upload ZAP
                     curl -X POST "${DEFECTDOJO_URL}/api/v2/import-scan/" \
                          -H "Authorization: Token \$DOJO_TOKEN" \
-                         -H "Content-Type: multipart/form-data" \
                          -F "active=true" \
-                         -F "verified=false" \
                          -F "scan_type=ZAP Scan" \
                          -F "product_name=HotelLux" \
                          -F "engagement_name=CI/CD Build ${env.BUILD_NUMBER}" \
                          -F "file=@zap-report.xml"
-                    """
-                }
-            }
-        }
 
-        stage('10. Sync SonarQube to DefectDojo') {
-            steps {
-                withCredentials([string(credentialsId: 'defectdojo-token', variable: 'DOJO_TOKEN')]) {
-                    sh """
+                    # Sync Sonar
                     curl -X POST "${DEFECTDOJO_URL}/api/v2/import-scan/" \
                          -H "Authorization: Token \$DOJO_TOKEN" \
                          -F "active=true" \
-                         -F "verified=false" \
                          -F "scan_type=SonarQube API Import" \
                          -F "product_name=HotelLux" \
                          -F "engagement_name=CI/CD Build ${env.BUILD_NUMBER}"
@@ -166,12 +170,10 @@ pipeline {
 
     post {
         always {
-            echo "Final cleanup... maintaining disk health while protecting persistent volumes."
             cleanWs() 
-            // SAFE CLEAN: Removed '-a'. Keeps your base tool images on the disk.
             sh 'docker image prune -f' 
         }
-        success { echo "SUCCESS: HotelLux DevSecOps Pipeline Finished!" }
-        failure { echo "FAILURE: Build failed. Check the Jenkins Console Output." }
+        success { echo "SUCCESS: HotelLux DevSecOps Build #${env.BUILD_NUMBER} Finished!" }
+        failure { echo "FAILURE: Build #${env.BUILD_NUMBER} failed." }
     }
 }
