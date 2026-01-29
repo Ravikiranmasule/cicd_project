@@ -8,6 +8,7 @@ pipeline {
 
     environment {
         SCANNER_HOME = tool 'SonarScanner' 
+        // Corrected URL: Removed /api/v2 from base to avoid 404 in connection test
         DEFECTDOJO_URL = 'http://52.71.8.63:8080' 
         APP_URL = 'http://angular-frontend'
         DOCKERHUB_USER = 'ravikiranmasule' 
@@ -18,6 +19,7 @@ pipeline {
             steps {
                 script {
                     echo "Checking if DefectDojo is alive..."
+                    // Correct health check endpoint
                     sh "curl -s --connect-timeout 5 ${DEFECTDOJO_URL}/api/v2/health_check/ || echo 'Warning: Dojo unreachable'"
                 }
                 echo "Cleaning memory safely..."
@@ -76,7 +78,7 @@ pipeline {
         stage('5. SCA Scan (Snyk)') {
             steps {
                 withCredentials([string(credentialsId: 'snyk-token', variable: 'SNYK_TOKEN')]) {
-                    // Scanning Maven dependencies for the backend
+                    // Running Snyk to scan third-party libraries
                     sh "docker run --rm -e SNYK_TOKEN=${SNYK_TOKEN} -v \$(pwd):/app snyk/snyk:maven snyk test --json > snyk-report.json || true"
                 }
             }
@@ -86,14 +88,17 @@ pipeline {
             steps {
                 script {
                     def dpCheckHome = tool 'DP-Check'
-                    sh "${dpCheckHome}/bin/dependency-check.sh --project HotelLux --scan . --format ALL --out ."
+                    // OPTIMIZED: Using NVD API Key to avoid download throttling
+                    withCredentials([string(credentialsId: 'nvd-api-key', variable: 'NVD_KEY')]) {
+                        sh "${dpCheckHome}/bin/dependency-check.sh --project HotelLux --scan . --format ALL --out . --nvdApiKey ${NVD_KEY}"
+                    }
                 }
             }
         }
 
         stage('7. Trivy File System Scan') {
             steps {
-                // Scans the source code files for hardcoded secrets and misconfigurations
+                // Scans the source code for hardcoded secrets before image build
                 sh 'docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v $(pwd):/tmp \
                     aquasec/trivy fs --severity HIGH,CRITICAL --format json --output /tmp/trivy-fs-report.json /tmp'
             }
@@ -126,7 +131,7 @@ pipeline {
             steps {
                 withCredentials([string(credentialsId: 'defectdojo-token', variable: 'DOJO_TOKEN')]) {
                     sh """
-                    # Create Engagement
+                    # Create Engagement in DefectDojo
                     curl -X POST "${DEFECTDOJO_URL}/api/v2/engagements/" \
                          -H "Authorization: Token \$DOJO_TOKEN" \
                          -H "Content-Type: multipart/form-data" \
@@ -135,12 +140,11 @@ pipeline {
                          -F "target_end=\$(date -d '+1 day' +%Y-%m-%d)" \
                          -F "product=1" -F "status=In Progress" -F "engagement_type=CI/CD"
 
-                    # Upload Trivy Image Report
+                    # Upload All Security Reports
                     curl -X POST "${DEFECTDOJO_URL}/api/v2/import-scan/" -H "Authorization: Token \$DOJO_TOKEN" \
                          -F "active=true" -F "scan_type=Trivy Scan" -F "product_name=HotelLux" \
                          -F "engagement_name=CI/CD Build ${env.BUILD_NUMBER}" -F "file=@trivy-report.json"
 
-                    # Upload Dependency-Check Report
                     curl -X POST "${DEFECTDOJO_URL}/api/v2/import-scan/" -H "Authorization: Token \$DOJO_TOKEN" \
                          -F "active=true" -F "scan_type=Dependency Check Scan" -F "product_name=HotelLux" \
                          -F "engagement_name=CI/CD Build ${env.BUILD_NUMBER}" -F "file=@dependency-check-report.xml"
@@ -162,16 +166,15 @@ pipeline {
             steps {
                 withCredentials([string(credentialsId: 'defectdojo-token', variable: 'DOJO_TOKEN')]) {
                     sh """
-                    # DAST Scan
+                    # DAST Scan against live app
                     docker run --user root --network hotellux-app-build_hotel-network --rm -v \$(pwd):/zap/wrk/:rw -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
                         -t ${APP_URL} -x zap-report.xml || true
                     
-                    # Upload ZAP
+                    # Sync ZAP and SonarQube results
                     curl -X POST "${DEFECTDOJO_URL}/api/v2/import-scan/" -H "Authorization: Token \$DOJO_TOKEN" \
                          -F "active=true" -F "scan_type=ZAP Scan" -F "product_name=HotelLux" \
                          -F "engagement_name=CI/CD Build ${env.BUILD_NUMBER}" -F "file=@zap-report.xml"
 
-                    # Sync Sonar
                     curl -X POST "${DEFECTDOJO_URL}/api/v2/import-scan/" -H "Authorization: Token \$DOJO_TOKEN" \
                          -F "active=true" -F "scan_type=SonarQube API Import" -F "product_name=HotelLux" \
                          -F "engagement_name=CI/CD Build ${env.BUILD_NUMBER}"
