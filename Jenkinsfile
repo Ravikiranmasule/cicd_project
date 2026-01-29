@@ -10,7 +10,6 @@ pipeline {
         SCANNER_HOME = tool 'SonarScanner' 
         DEFECTDOJO_URL = 'http://52.71.8.63:8080' 
         APP_URL = 'http://angular-frontend'
-        // DockerHub Username - Replace 'ravikiranmasule' if it is different
         DOCKERHUB_USER = 'ravikiranmasule' 
     }
 
@@ -21,7 +20,7 @@ pipeline {
                     echo "Checking if DefectDojo is alive..."
                     sh "curl -s --connect-timeout 5 ${DEFECTDOJO_URL}/api/v2/health_check/ || echo 'Warning: Dojo unreachable'"
                 }
-                echo "Cleaning memory safely without wiping tool data..."
+                echo "Cleaning memory safely..."
                 sh 'sudo systemctl enable docker'
                 sh 'docker update --restart always $(docker ps -q) || true'
                 sh 'docker image prune -f' 
@@ -74,27 +73,48 @@ pipeline {
             }
         }
 
-        stage('5. Security Scan (Trivy)') {
+        stage('5. SCA Scan (Snyk)') {
             steps {
-                // Scanning local image before pushing
+                withCredentials([string(credentialsId: 'snyk-token', variable: 'SNYK_TOKEN')]) {
+                    // Scanning Maven dependencies for the backend
+                    sh "docker run --rm -e SNYK_TOKEN=${SNYK_TOKEN} -v \$(pwd):/app snyk/snyk:maven snyk test --json > snyk-report.json || true"
+                }
+            }
+        }
+
+        stage('6. SCA Scan (Dependency-Check)') {
+            steps {
+                script {
+                    def dpCheckHome = tool 'DP-Check'
+                    sh "${dpCheckHome}/bin/dependency-check.sh --project HotelLux --scan . --format ALL --out ."
+                }
+            }
+        }
+
+        stage('7. Trivy File System Scan') {
+            steps {
+                // Scans the source code files for hardcoded secrets and misconfigurations
+                sh 'docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v $(pwd):/tmp \
+                    aquasec/trivy fs --severity HIGH,CRITICAL --format json --output /tmp/trivy-fs-report.json /tmp'
+            }
+        }
+
+        stage('8. Trivy Image Scan') {
+            steps {
                 sh 'docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v $(pwd):/tmp \
                     aquasec/trivy image --severity HIGH,CRITICAL --format json --output /tmp/trivy-report.json mysql:8.0'
             }
         }
 
-        stage('6. Push to DockerHub') {
+        stage('9. Push to DockerHub') {
             steps {
                 withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', 
                                  usernameVariable: 'DOCKER_USER', 
                                  passwordVariable: 'DOCKER_PASS')]) {
                     sh """
                     echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin
-                    
-                    # Tagging the build artifacts
                     docker tag hotellux-app-build_backend:latest \$DOCKER_USER/hotellux-backend:latest
                     docker tag hotellux-app-build_frontend:latest \$DOCKER_USER/hotellux-frontend:latest
-                    
-                    # Pushing to Registry
                     docker push \$DOCKER_USER/hotellux-backend:latest
                     docker push \$DOCKER_USER/hotellux-frontend:latest
                     """
@@ -102,34 +122,34 @@ pipeline {
             }
         }
 
-        stage('7. Create Engagement & Upload Trivy') {
+        stage('10. Create Engagement & Upload Reports') {
             steps {
                 withCredentials([string(credentialsId: 'defectdojo-token', variable: 'DOJO_TOKEN')]) {
                     sh """
+                    # Create Engagement
                     curl -X POST "${DEFECTDOJO_URL}/api/v2/engagements/" \
                          -H "Authorization: Token \$DOJO_TOKEN" \
                          -H "Content-Type: multipart/form-data" \
                          -F "name=CI/CD Build ${env.BUILD_NUMBER}" \
                          -F "target_start=\$(date +%Y-%m-%d)" \
                          -F "target_end=\$(date -d '+1 day' +%Y-%m-%d)" \
-                         -F "product=1" \
-                         -F "status=In Progress" \
-                         -F "engagement_type=CI/CD"
+                         -F "product=1" -F "status=In Progress" -F "engagement_type=CI/CD"
 
-                    curl -X POST "${DEFECTDOJO_URL}/api/v2/import-scan/" \
-                         -H "Authorization: Token \$DOJO_TOKEN" \
-                         -F "active=true" \
-                         -F "verified=false" \
-                         -F "scan_type=Trivy Scan" \
-                         -F "product_name=HotelLux" \
-                         -F "engagement_name=CI/CD Build ${env.BUILD_NUMBER}" \
-                         -F "file=@trivy-report.json"
+                    # Upload Trivy Image Report
+                    curl -X POST "${DEFECTDOJO_URL}/api/v2/import-scan/" -H "Authorization: Token \$DOJO_TOKEN" \
+                         -F "active=true" -F "scan_type=Trivy Scan" -F "product_name=HotelLux" \
+                         -F "engagement_name=CI/CD Build ${env.BUILD_NUMBER}" -F "file=@trivy-report.json"
+
+                    # Upload Dependency-Check Report
+                    curl -X POST "${DEFECTDOJO_URL}/api/v2/import-scan/" -H "Authorization: Token \$DOJO_TOKEN" \
+                         -F "active=true" -F "scan_type=Dependency Check Scan" -F "product_name=HotelLux" \
+                         -F "engagement_name=CI/CD Build ${env.BUILD_NUMBER}" -F "file=@dependency-check-report.xml"
                     """
                 }
             }
         }
 
-        stage('8. Docker Deploy') {
+        stage('11. Docker Deploy') {
             steps {
                 sh 'docker rm -f prometheus || true' 
                 sh 'docker-compose down --remove-orphans || true'
@@ -138,7 +158,7 @@ pipeline {
             }
         }
 
-        stage('9. Final Security Sync (ZAP & Sonar)') {
+        stage('12. Final Security Sync (ZAP & Sonar)') {
             steps {
                 withCredentials([string(credentialsId: 'defectdojo-token', variable: 'DOJO_TOKEN')]) {
                     sh """
@@ -147,20 +167,13 @@ pipeline {
                         -t ${APP_URL} -x zap-report.xml || true
                     
                     # Upload ZAP
-                    curl -X POST "${DEFECTDOJO_URL}/api/v2/import-scan/" \
-                         -H "Authorization: Token \$DOJO_TOKEN" \
-                         -F "active=true" \
-                         -F "scan_type=ZAP Scan" \
-                         -F "product_name=HotelLux" \
-                         -F "engagement_name=CI/CD Build ${env.BUILD_NUMBER}" \
-                         -F "file=@zap-report.xml"
+                    curl -X POST "${DEFECTDOJO_URL}/api/v2/import-scan/" -H "Authorization: Token \$DOJO_TOKEN" \
+                         -F "active=true" -F "scan_type=ZAP Scan" -F "product_name=HotelLux" \
+                         -F "engagement_name=CI/CD Build ${env.BUILD_NUMBER}" -F "file=@zap-report.xml"
 
                     # Sync Sonar
-                    curl -X POST "${DEFECTDOJO_URL}/api/v2/import-scan/" \
-                         -H "Authorization: Token \$DOJO_TOKEN" \
-                         -F "active=true" \
-                         -F "scan_type=SonarQube API Import" \
-                         -F "product_name=HotelLux" \
+                    curl -X POST "${DEFECTDOJO_URL}/api/v2/import-scan/" -H "Authorization: Token \$DOJO_TOKEN" \
+                         -F "active=true" -F "scan_type=SonarQube API Import" -F "product_name=HotelLux" \
                          -F "engagement_name=CI/CD Build ${env.BUILD_NUMBER}"
                     """
                 }
