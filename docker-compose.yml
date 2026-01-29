@@ -76,6 +76,16 @@ services:
       - hotel-network
     restart: always
 
+  # 6. Blackbox Exporter (NEW SERVICE)
+  blackbox-exporter:
+    image: prom/blackbox-exporter:latest
+    container_name: blackbox-exporter
+    ports:
+      - "9115:9115"
+    networks:
+      - hotel-network
+    restart: always
+
 networks:
   hotel-network:
     driver: bridge
