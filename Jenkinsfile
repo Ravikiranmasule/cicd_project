@@ -76,7 +76,6 @@ pipeline {
         stage('5. SCA Scan (Snyk)') {
             steps {
                 withCredentials([string(credentialsId: 'snyk-token', variable: 'SNYK_TOKEN')]) {
-                    // Added || true to prevent Snyk vulnerabilities from breaking the build before reports are uploaded
                     sh "docker run --rm -e SNYK_TOKEN=${SNYK_TOKEN} -v \$(pwd):/app snyk/snyk:maven snyk test --json > snyk-report.json || true"
                 }
             }
@@ -87,13 +86,12 @@ pipeline {
                 script {
                     def dpCheckHome = tool 'DP-Check'
                     withCredentials([string(credentialsId: 'nvd-api-key', variable: 'NVD_KEY')]) {
-                        // FIX: Added --disableYarnAudit and --nodeAuditSkipExit to resolve Exit Code 14
+                        // FIX: Removed unrecognized '--nodeAuditSkipExit' and added '--disableYarnAudit'
                         sh """
                         ${dpCheckHome}/bin/dependency-check.sh --project HotelLux \
                         --scan . --format ALL --out . \
                         --nvdApiKey ${NVD_KEY} \
-                        --disableYarnAudit \
-                        --nodeAuditSkipExit || true
+                        --disableYarnAudit || true
                         """
                     }
                 }
@@ -102,15 +100,13 @@ pipeline {
 
         stage('7. Trivy File System Scan') {
             steps {
-                sh 'docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v $(pwd):/tmp \
-                    aquasec/trivy fs --severity HIGH,CRITICAL --format json --output /tmp/trivy-fs-report.json /tmp'
+                sh 'docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v $(pwd):/tmp aquasec/trivy fs --severity HIGH,CRITICAL --format json --output /tmp/trivy-fs-report.json /tmp'
             }
         }
 
         stage('8. Trivy Image Scan') {
             steps {
-                sh 'docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v $(pwd):/tmp \
-                    aquasec/trivy image --severity HIGH,CRITICAL --format json --output /tmp/trivy-report.json mysql:8.0'
+                sh 'docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v $(pwd):/tmp aquasec/trivy image --severity HIGH,CRITICAL --format json --output /tmp/trivy-report.json mysql:8.0'
             }
         }
 
@@ -143,14 +139,19 @@ pipeline {
                          -F "target_end=\$(date -d '+1 day' +%Y-%m-%d)" \
                          -F "product=1" -F "status=In Progress" -F "engagement_type=CI/CD"
 
-                    # Upload Trivy and Dependency-Check
+                    # Upload Trivy
                     curl -X POST "${DEFECTDOJO_URL}/api/v2/import-scan/" -H "Authorization: Token \$DOJO_TOKEN" \
                          -F "active=true" -F "scan_type=Trivy Scan" -F "product_name=HotelLux" \
                          -F "engagement_name=CI/CD Build ${env.BUILD_NUMBER}" -F "file=@trivy-report.json"
 
-                    curl -X POST "${DEFECTDOJO_URL}/api/v2/import-scan/" -H "Authorization: Token \$DOJO_TOKEN" \
-                         -F "active=true" -F "scan_type=Dependency Check Scan" -F "product_name=HotelLux" \
-                         -F "engagement_name=CI/CD Build ${env.BUILD_NUMBER}" -F "file=@dependency-check-report.xml"
+                    # FIX: Added check to prevent Exit Code 26 if file is missing
+                    if [ -f dependency-check-report.xml ]; then
+                        curl -X POST "${DEFECTDOJO_URL}/api/v2/import-scan/" -H "Authorization: Token \$DOJO_TOKEN" \
+                             -F "active=true" -F "scan_type=Dependency Check Scan" -F "product_name=HotelLux" \
+                             -F "engagement_name=CI/CD Build ${env.BUILD_NUMBER}" -F "file=@dependency-check-report.xml"
+                    else
+                        echo "Warning: dependency-check-report.xml not found. Skipping upload."
+                    fi
                     """
                 }
             }
@@ -172,9 +173,11 @@ pipeline {
                     docker run --user root --network hotellux-app-build_hotel-network --rm -v \$(pwd):/zap/wrk/:rw -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
                         -t ${APP_URL} -x zap-report.xml || true
                     
-                    curl -X POST "${DEFECTDOJO_URL}/api/v2/import-scan/" -H "Authorization: Token \$DOJO_TOKEN" \
-                         -F "active=true" -F "scan_type=ZAP Scan" -F "product_name=HotelLux" \
-                         -F "engagement_name=CI/CD Build ${env.BUILD_NUMBER}" -F "file=@zap-report.xml"
+                    if [ -f zap-report.xml ]; then
+                        curl -X POST "${DEFECTDOJO_URL}/api/v2/import-scan/" -H "Authorization: Token \$DOJO_TOKEN" \
+                             -F "active=true" -F "scan_type=ZAP Scan" -F "product_name=HotelLux" \
+                             -F "engagement_name=CI/CD Build ${env.BUILD_NUMBER}" -F "file=@zap-report.xml"
+                    fi
 
                     curl -X POST "${DEFECTDOJO_URL}/api/v2/import-scan/" -H "Authorization: Token \$DOJO_TOKEN" \
                          -F "active=true" -F "scan_type=SonarQube API Import" -F "product_name=HotelLux" \
